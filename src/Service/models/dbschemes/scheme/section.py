@@ -1,5 +1,5 @@
 from .oc_coding_base import SQLAlchemyBase
-from sqlalchemy import Column, Integer, String, CheckConstraint
+from sqlalchemy import Column, Integer, String, CheckConstraint, Text
 from sqlalchemy.orm import relationship
 
 class Section(SQLAlchemyBase):
@@ -9,7 +9,8 @@ class Section(SQLAlchemyBase):
     id_sec = Column(Integer, primary_key=True, autoincrement=True)
     code_sec = Column(String(1), nullable=False, unique=True)
     name_sec = Column(String(255), nullable=False, unique=True)
-
+    description_sec = Column(Text, nullable=True)
+    tasks_sec = Column(Text, nullable=True)
     subsections = relationship("Subsection", back_populates="section", cascade="all, delete-orphan")
 
     __table_args__ = (

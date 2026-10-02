@@ -10,7 +10,8 @@ class Group(SQLAlchemyBase):
     id_div = Column(Integer, ForeignKey("divisions.id_div"), nullable=False)
     code_gr = Column(String(4), nullable=False, unique=True)
     name_gr = Column(String(255), nullable=False, unique=True)
-    description = Column(Text, nullable=True)
+    description_gr = Column(Text, nullable=True)
+    tasks_gr = Column(Text, nullable=True)
 
     division = relationship("Division", back_populates="groups")
     occupations = relationship("Occupation", back_populates="group", cascade="all, delete-orphan")
