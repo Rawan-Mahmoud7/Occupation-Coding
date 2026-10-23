@@ -11,7 +11,9 @@ class Section(SQLAlchemyBase):
     name_sec = Column(String(255), nullable=False, unique=True)
     description_sec = Column(Text, nullable=True)
     tasks_sec = Column(Text, nullable=True)
+    distinguishing_line_sec = Column(Text, nullable=True)
     subsections = relationship("Subsection", back_populates="section", cascade="all, delete-orphan")
+    occupation_vectors = relationship("OccupationVector", back_populates="section", cascade="all, delete-orphan")
 
     __table_args__ = (
         CheckConstraint(

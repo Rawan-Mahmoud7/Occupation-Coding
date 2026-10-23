@@ -4,6 +4,7 @@ from .subsection import Subsection
 from .division import Division
 from .group import Group
 from .occupation import Occupation
+from .occupation_vector import OccupationVector
 
 __all__ = [
     "SQLAlchemyBase",
@@ -12,4 +13,5 @@ __all__ = [
     "Division",
     "Group",
     "Occupation",
+    "OccupationVector",
 ]

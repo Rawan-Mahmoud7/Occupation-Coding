@@ -1,5 +1,5 @@
 from .oc_coding_base import SQLAlchemyBase
-from sqlalchemy import Column, Integer, String, ForeignKey, Index, CheckConstraint
+from sqlalchemy import Column, Integer, String, ForeignKey, Index, CheckConstraint, Text
 from sqlalchemy.orm import relationship
 
 class Occupation(SQLAlchemyBase):
@@ -10,8 +10,10 @@ class Occupation(SQLAlchemyBase):
     id_gr = Column(Integer, ForeignKey("groups.id_gr"), nullable=False)
     code_oc = Column(String(6), nullable=False, unique=True)
     name_oc = Column(String(255), nullable=False, unique=True)
+    generated_description = Column(Text, nullable=True)
 
     group = relationship("Group", back_populates="occupations")
+    vector = relationship("OccupationVector", back_populates="occupation", uselist=False, cascade="all, delete-orphan")
 
     __table_args__ = (
         Index('ix_occupations_id_gr', id_gr),

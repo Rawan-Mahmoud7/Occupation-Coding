@@ -1,3 +1,6 @@
 # Data files
 *.docx
 *.xlsx
+*.txt
+*.npz
+Voyage AI voyage-context-4.py
