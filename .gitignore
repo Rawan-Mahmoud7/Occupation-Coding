@@ -3,5 +3,6 @@
 *.xlsx
 *.txt
 *.npz
+*.json
 Voyage AI voyage-context-4.py
 *.md
