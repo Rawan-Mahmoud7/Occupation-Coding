@@ -1,31 +1,136 @@
 """
 Coding Prompts Module.
 Contains system prompts, understanding prompts, selection prompts, and candidate tree builder.
-All LLM prompts deal strictly with text; numeric codes are managed by Python code.
+Section data is sourced directly from the official database 'sections' table (with distinguishing lines).
+Supports dynamic loading on startup from PostgreSQL with in-memory caching.
 """
 
-import json
-from typing import List
+from typing import List, Optional, Dict
+from sqlalchemy import text
 from Service.interfaces.pipeline_context import Candidate
 
+# ── 1. Official Master Section Records (matching DB sections table exactly) ──
+OFFICIAL_SECTIONS_MASTER: List[Dict[str, str]] = [
+    {
+        "code_sec": "1",
+        "name_sec": "المديرون",
+        "distinguishing_line_sec": "ما يميزه: سلطة إدارة مؤسسية وقرار تنفيذي — ليس ممارساً بيده بل يدير آخرين ويضع سياسات.",
+    },
+    {
+        "code_sec": "2",
+        "name_sec": "الأخصائيون ( أصحاب المهن العلمية )",
+        "distinguishing_line_sec": "ما يميزه: يمارس بنفسه عملاً علمياً أو مهنياً يتطلب دراسة جامعية تخصصية (مهندس، طبيب، محاسب، مبرمج، مدرس).",
+    },
+    {
+        "code_sec": "3",
+        "name_sec": "الفنيون ومساعدو الأخصائيين",
+        "distinguishing_line_sec": "ما يميزه: يطبق عملياً ما صممه الأخصائي — فني مساعد وليس أخصائي مستقل (فني معمل، فني IT، مشرف موقع).",
+    },
+    {
+        "code_sec": "4",
+        "name_sec": "الكتبة",
+        "distinguishing_line_sec": "ما يميزه: عمل مكتبي بحت — تسجيل وحفظ بيانات ومستندات واستقبال، وليس بيع أو خدمة ميدانية.",
+    },
+    {
+        "code_sec": "5",
+        "name_sec": "العاملون فى مجال الخدمات والمبيعات",
+        "distinguishing_line_sec": "ما يميزه: خدمة مباشرة وجهاً لوجه للأفراد أو بيع بالمحلات — وليس عمل مكتبي ولا عمل بدني خشن.",
+    },
+    {
+        "code_sec": "6",
+        "name_sec": "العمال المهرة فى الزراعة والصيد",
+        "distinguishing_line_sec": "ما يميزه: إنتاج زراعي أو حيواني أو سمكي ماهر — يفهم في الزراعة والتربية وليس مجرد عامل يومية.",
+    },
+    {
+        "code_sec": "7",
+        "name_sec": "الحرفيون ومن إليهم",
+        "distinguishing_line_sec": "ما يميزه: صنعة وحرفة يدوية ماهرة (بناء، سباكة، ميكانيكا ورش، نجارة) — وليس تشغيل ماكينة مصنع.",
+    },
+    {
+        "code_sec": "8",
+        "name_sec": "عمال تشغيل المصانع ومشغلو الماكينات وعمال تجميع مكونات الإنتاج",
+        "distinguishing_line_sec": "ما يميزه: تشغيل آلات ومعدات ثابتة أو قيادة مركبات بمحرك — وليس عمل يدوي حرفي.",
+    },
+    {
+        "code_sec": "9",
+        "name_sec": "عمال المهن الأولية",
+        "distinguishing_line_sec": "ما يميزه: أعمال بدنية بسيطة ومتكررة بالعدد اليدوية فقط — لا مهارة ولا آلات ولا قرارات.",
+    },
+]
 
-# ── 1. Static Sections System Prompt (Cached prefix for LLM Prompt Caching) ──
-STATIC_SECTIONS_SYSTEM_PROMPT = """أنت خبير تصنيف وتكويد مهني معتمد وفقاً لـ "التصنيف المهني المصري الموحد 2017" المتوافق مع المعيار الدولي ISCO-08.
-مهمتك تحليل البيانات المهنية بدقة عالية وفق الأقسام الرئيسية التسعة التالية:
 
-[الأقسام الرئيسية للتصنيف 1-9]:
-- القسم 1: المديرون (يشمل مديري العموم، الإدارات، المؤسسات، ومديري الإنتاج والعمليات).
-- القسم 2: الاختصاصيون / المحترفون (يشمل المهن الفكرية والعلمية العليا التي تتطلب مؤهلاً جامعياً كالأطباء، المهندسين، المبرمجين، المحامين، والأساتذة).
-- القسم 3: الفنيون ومساعدو الاختصاصيين (يشمل الأعمال الفنية والمساعدين التقنيين كمشرفي العمليات، مساعدي التمريض، والمساحين وفنيي المعامل).
-- القسم 4: موظفو الدعم المكتبي والكتبة (يشمل موظفي خدمة العملاء، الكاشير، المحاسبين المساعدين، كتبة المخازن والأرشيف والسكرتارية).
-- القسم 5: عمال البيع والخدمات (يشمل البائعين في المتاجر والمولات، مضيفي المطاعم، عمال النظافة الفندقية، الحراس، ورجال الشرطة والإطفاء).
-- القسم 6: العمال المهرة في الزراعة والصيد والغابات (يشمل مزارعي المحاصيل، مربي الماشية والدواجن، والصيادين التجاريين).
-- القسم 7: عمال الحرف والمهن اليدوية المرتبطة بها (يشمل البنائين، النجارين، الحدادين، الخراطين، السباكين، اللحامين، السمكرية، والكهربائيين).
-- القسم 8: مشغلو الآلات ومجمعو المعدات وسائقو المركبات (يشمل سائقي الشاحنات والحافلات، مشغلي المكابس والمصانع وعمال خطوط التجميع الآلية).
-- القسم 9: عمال المهن الأولية (يشمل العمالة غير الماهرة كعمال البناء اليدوي، الشيالين، عمال النظافة العامة، وحراس الأمن البسيطين).
+def format_sections_for_prompt(sections_records: List[Dict[str, str]]) -> str:
+    """
+    Constructs the authoritative system prompt from database section rows.
+    """
+    lines = [
+        "أنت خبير تصنيف وتكويد مهني معتمد وفقاً لـ 'التصنيف المهني المصري الموحد 2017' المتوافق مع المعيار الدولي ISCO-08.",
+        "مهمتك تحليل البيانات المهنية بدقة عالية وفق الأقسام الرئيسية المعتمدة رسمياً في قاعدة البيانات:",
+        "",
+        "[الأقسام الرئيسية للتصنيف 1-9 من قاعدة البيانات الرسمية]:",
+    ]
+    for sec in sorted(sections_records, key=lambda x: str(x.get("code_sec", ""))):
+        c = sec.get("code_sec", "")
+        name = sec.get("name_sec", "")
+        dist = sec.get("distinguishing_line_sec", "")
+        if dist:
+            lines.append(f"- القسم {c}: {name} ({dist})")
+        else:
+            lines.append(f"- القسم {c}: {name}")
 
-قاعدة أساسية: تعامل مع النصوص والأسماء المهنية فقط. لا تحاول تخمين أو إنتاج أي أرقام كودية.
-"""
+    lines.append("")
+    lines.append("قاعدة أساسية: تعامل مع النصوص والأسماء المهنية فقط. لا تحاول تخمين أو إنتاج أي أرقام كودية.")
+    return "\n".join(lines)
+
+
+# Pre-built system prompt from official master records
+STATIC_SECTIONS_SYSTEM_PROMPT = format_sections_for_prompt(OFFICIAL_SECTIONS_MASTER)
+
+# In-memory cached system prompt (can be updated from DB dynamically at lifespan startup)
+_CACHED_SYSTEM_PROMPT: str = STATIC_SECTIONS_SYSTEM_PROMPT
+
+
+def get_sections_system_prompt() -> str:
+    """Returns the cached sections system prompt (loaded from DB or master records)."""
+    return _CACHED_SYSTEM_PROMPT
+
+
+def set_sections_system_prompt(prompt_text: str) -> None:
+    """Updates the in-memory cached prompt."""
+    global _CACHED_SYSTEM_PROMPT
+    _CACHED_SYSTEM_PROMPT = prompt_text
+
+
+async def load_sections_prompt_from_db(db_session_factory) -> str:
+    """
+    Queries the PostgreSQL 'sections' table directly on application startup,
+    constructs the system prompt dynamically from actual DB records, and caches it in memory.
+    """
+    query = text("""
+        SELECT code_sec, name_sec, distinguishing_line_sec
+        FROM sections
+        ORDER BY CAST(code_sec AS INTEGER) ASC;
+    """)
+    try:
+        async with db_session_factory() as session:
+            result = await session.execute(query)
+            rows = result.fetchall()
+            if rows:
+                db_sections = [
+                    {
+                        "code_sec": str(r.code_sec),
+                        "name_sec": str(r.name_sec),
+                        "distinguishing_line_sec": str(r.distinguishing_line_sec or ""),
+                    }
+                    for r in rows
+                ]
+                prompt = format_sections_for_prompt(db_sections)
+                set_sections_system_prompt(prompt)
+                return prompt
+    except Exception as e:
+        # Fallback to master records if database is not reachable at moment of call
+        pass
+    return get_sections_system_prompt()
 
 
 # ── 2. Build Understanding Prompt ──
@@ -62,7 +167,7 @@ def build_hierarchical_tree(candidates: List[Candidate]) -> str:
         return "لا توجد مهن مرشحة."
 
     # Group hierarchy: section -> subsection -> division -> group -> list of candidate names
-    tree = {}
+    tree: Dict[str, Dict[str, Dict[str, Dict[str, List]]]] = {}
     for cand in candidates:
         sec = cand.section_name or f"القسم {cand.section_code}"
         sub = cand.subsection_name or "قسم فرعي عام"
