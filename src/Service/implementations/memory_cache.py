@@ -54,6 +54,12 @@ class InMemoryCache:
             return result
         return None
 
+    async def set_exact(self, cache_key: str, result: CacheResult) -> None:
+        """Stores a result directly into the exact cache."""
+        async with self._lock:
+            self._exact_cache[cache_key] = result
+            self._stats["stored"] += 1
+
     async def semantic_lookup(
         self,
         query_vector: List[float],

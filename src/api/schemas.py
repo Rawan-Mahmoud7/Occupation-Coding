@@ -1,42 +1,48 @@
 """
 API Schemas Module.
 Defines Pydantic v2 request/response models and health check contracts.
+Clean output without unnecessary hierarchy columns.
 """
 
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
-# ── 1. Request Models ──
+# ─── 1. Request Models ───
 
 class OccupationRowInput(BaseModel):
     """Input payload for a single occupation row (real input fields only)."""
     occupation_name: str = Field(..., description="المسمى المهني المدخل")
     activity: Optional[str] = Field(default="", description="النشاط الاقتصادي للمنشأة")
     education_raw: Optional[str] = Field(default="", description="المؤهل التعليمي الخام")
-    education_detail_a: Optional[str] = Field(default="", description="تخصص المؤهل إن وجد")
+    education_detail_a: Optional[str] = Field(default="", description="أطراف المؤهل إن وجد")
     education_detail_b: Optional[str] = Field(default="", description="تفاصيل إضافية عن المؤهل")
 
 
 class BatchCodingRequest(BaseModel):
     """Request payload for batch occupation coding."""
     rows: List[OccupationRowInput] = Field(..., description="قائمة الصفوف المطلوب تكويدها")
-    bypass_cache: bool = Field(default=False, description="تخطي الكاش وإجبار المرور بالخط كاملاً")
+    bypass_cache: bool = Field(default=False, description="تخطي الكاش واختبار المعالجة بالكامل")
 
 
-# ── 2. Response Models ──
+class AddLLMKeyRequest(BaseModel):
+    """Request payload for dynamically adding an LLM API key."""
+    api_key: str = Field(..., description="مفتاح الـ API الجديد")
+    account_name: Optional[str] = Field(default=None, description="اسم أو معرّف الحساب (اختياري)")
+
+
+# ─── 2. Response Models ───
 
 class SingleCodingResult(BaseModel):
-    """Coding output for a single row including complete hierarchy names."""
-    row_index: int = Field(..., description="ترتيب الصف في الدفعة الأصلية")
+    """
+    Coding output for a single row.
+    Contains clean official codes and metadata without unnecessary hierarchy fields.
+    """
+    row_index: int = Field(..., description="ترتيب الصف في الدفعة الحالية")
     assigned_code: str = Field(..., description="الرمز المهني المعتمد (6 أو 7 أرقام)")
     assigned_name: str = Field(..., description="المسمى الرسمي المعتمد في الدليل المصري")
-    section_name: str = Field(default="", description="اسم القسم الرئيسي")
-    subsection_name: str = Field(default="", description="اسم القسم الفرعي")
-    division_name: str = Field(default="", description="اسم الباب")
-    group_name: str = Field(default="", description="اسم الفصل / المجموعة")
     confidence: float = Field(..., description="نسبة الثقة في النتيجة (0.0 إلى 1.0)")
-    matched_via: str = Field(..., description="طريقة التكويد (exact_cache, db_exact_match, semantic_cache, exact_inflight_wait, semantic_inflight_wait, llm_pipeline)")
+    matched_via: str = Field(..., description="طريقة التكويد (exact_cache, db_exact_match, semantic_cache, exact_inflight_wait, semantic_inflight_wait, llm_pipeline, fallback)")
     education_level: str = Field(..., description="المستوى التعليمي المعياري المحسوب")
     eligible_sections: List[int] = Field(default_factory=list, description="الأقسام الرئيسية المؤهلة")
     processing_time_ms: float = Field(..., description="زمن معالجة هذا السجل بالمللي ثانية")
@@ -63,7 +69,14 @@ class BatchCodingResponse(BaseModel):
     summary: BatchSummaryMetrics
 
 
-# ── 3. Health Check Models ──
+class AddLLMKeyResponse(BaseModel):
+    """Response payload for adding an LLM API key."""
+    status: str = Field(..., description="حالة العملية (success/error)")
+    message: str = Field(..., description="تفاصيل العملية")
+    total_active_keys: int = Field(..., description="إجمالي عدد المفاتيح النشطة في النظام")
+
+
+# ─── 3. Health Check Models ───
 
 class ComponentHealth(BaseModel):
     name: str

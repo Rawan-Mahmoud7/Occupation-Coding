@@ -1,6 +1,7 @@
 # Data files
 *.docx
 *.xlsx
+*.csv
 *.txt
 *.npz
 *.json

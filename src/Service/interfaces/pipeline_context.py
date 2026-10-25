@@ -64,6 +64,7 @@ class PipelineContext:
     confidence: float = 0.0
     is_resolved: bool = False
     waited_on_request_id: Optional[str] = None
+    request_id: str = ""
 
     # ── 4. Stage 3 Output (LLM Understanding) ──
     work_description_formal: str = ""

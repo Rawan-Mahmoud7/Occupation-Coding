@@ -43,6 +43,10 @@ class CacheProvider(Protocol):
         """O(1) lookup in completed exact cache."""
         ...
 
+    async def set_exact(self, cache_key: str, result: CacheResult) -> None:
+        """Stores a result directly into the exact cache."""
+        ...
+
     async def semantic_lookup(
         self,
         query_vector: List[float],
