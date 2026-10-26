@@ -1,23 +1,26 @@
 """
 Voyage AI Embedder Implementation.
-Calls Voyage AI API directly using httpx.AsyncClient with strict Token Bucket Rate Limiting
-enforcing 3 RPM and 10,000 TPM with exponential backoff on HTTP 429.
+Uses the official voyageai SDK with support for both contextualized models
+(e.g., voyage-context-4) and standard embedding models (e.g., voyage-3).
+Enforces RPM rate limiting and supports both single and batch embedding.
 Embeds ONLY occupation and activity (education is excluded).
 """
 
 import time
 import asyncio
 import logging
-from typing import List
-import httpx
+from typing import List, Optional
+
+import voyageai
 
 log = logging.getLogger(__name__)
 
 
 class VoyageEmbedder:
     """
-    Implements Embedder protocol for Voyage AI (e.g. voyage-context-4).
-    Enforces 3 RPM and 10K TPM limits.
+    Implements Embedder protocol using the official voyageai SDK.
+    Supports voyage-context-4 (via contextualized_embed) and standard models (via embed).
+    Enforces RPM rate limiting (default 3 RPM for free tier).
     """
 
     def __init__(
@@ -30,90 +33,94 @@ class VoyageEmbedder:
         timeout: float = 25.0,
         max_retries: int = 3,
     ):
-        self._api_key = api_key
-        self._model = model
+        self._api_key   = api_key
+        self._model     = model
         self._dimension = dimension
         self._rpm_limit = rpm_limit
         self._tpm_limit = tpm_limit
-        self._timeout = timeout
+        self._timeout   = timeout
         self._max_retries = max_retries
 
-        # Rate limiting: minimum interval between requests for 3 RPM = 20.0 seconds
-        self._min_interval = 60.0 / max(1, self._rpm_limit)
+        # Rate limiting: min interval between requests (+1.0s safety margin for strict 60s windows)
+        raw_interval = 60.0 / max(1, self._rpm_limit)
+        self._min_interval = max(raw_interval + 1.0, 21.0)
         self._last_call_time = 0.0
         self._rate_lock = asyncio.Lock()
 
-        self._client: Optional[httpx.AsyncClient] = None
+        # Official async SDK client
+        self._client = voyageai.AsyncClient(api_key=api_key)
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url="https://api.voyageai.com/v1",
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-                timeout=self._timeout,
-            )
-        return self._client
+        log.info(f"VoyageEmbedder initialized: model={model} dim={dimension} rpm={rpm_limit} min_interval={self._min_interval:.1f}s")
 
     async def _throttle(self) -> None:
-        """Enforces 3 RPM minimum interval between calls."""
+        """Enforces RPM minimum interval between API calls."""
         async with self._rate_lock:
             now = time.monotonic()
             elapsed = now - self._last_call_time
             if elapsed < self._min_interval:
                 wait_time = self._min_interval - elapsed
+                log.info(f"Voyage rate-limit throttle: sleeping {wait_time:.1f}s")
                 await asyncio.sleep(wait_time)
             self._last_call_time = time.monotonic()
 
     async def embed(self, text: str) -> List[float]:
-        """Generates embedding for a single text."""
-        res = await self.embed_batch([text])
-        return res[0] if res else [0.0] * self._dimension
+        """Generates embedding for a single text string."""
+        results = await self.embed_batch([text])
+        return results[0] if results else [0.0] * self._dimension
 
     async def embed_batch(self, texts: List[str]) -> List[List[float]]:
         """
-        Embeds a list of texts in batch with automatic exponential retry on HTTP 429.
+        Embeds a list of texts using the official Voyage SDK.
+        Automatically uses contextualized_embed for context models (like voyage-context-4)
+        or embed for standard embedding models.
+        Handles rate limiting and retries on errors.
         """
         if not texts:
             return []
 
-        clean_texts = [t.strip() for t in texts if t.strip()]
+        clean_texts = [t.strip() for t in texts if t and t.strip()]
         if not clean_texts:
-            return [[0.0] * self._dimension]
-
-        client = await self._get_client()
+            return [[0.0] * self._dimension for _ in texts]
 
         for attempt in range(self._max_retries + 1):
             await self._throttle()
             try:
-                response = await client.post(
-                    "/embeddings",
-                    json={"input": clean_texts, "model": self._model},
-                )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    return [item["embedding"] for item in data["data"]]
-
-                elif response.status_code == 429:
-                    backoff = (2 ** attempt) * 5.0
-                    log.warning(f"Voyage AI rate limit 429 received. Backing off for {backoff:.1f}s...")
-                    await asyncio.sleep(backoff)
-                    continue
-
+                if "context" in self._model.lower():
+                    # voyage-context models (e.g. voyage-context-4) require contextualized_embed
+                    # Each input text is treated as a 1-chunk document/query group
+                    inputs = [[t] for t in clean_texts]
+                    response = await self._client.contextualized_embed(
+                        model=self._model,
+                        inputs=inputs,
+                        input_type="query",
+                        output_dimension=self._dimension,
+                    )
+                    vectors = [item.embeddings[0] for item in response.results]
                 else:
-                    log.error(f"Voyage AI returned status {response.status_code}: {response.text}")
-                    if attempt == self._max_retries:
-                        raise RuntimeError(f"Voyage API error: {response.status_code} - {response.text}")
-                    await asyncio.sleep(2.0)
+                    result = await self._client.embed(
+                        clean_texts,
+                        model=self._model,
+                        input_type="query",
+                    )
+                    vectors = [emb for emb in result.embeddings]
 
-            except httpx.RequestError as e:
-                log.error(f"Network error calling Voyage AI: {e}")
+                log.debug(f"Voyage embed_batch: {len(vectors)} vectors generated with dim={len(vectors[0]) if vectors else 0}")
+                return vectors
+
+            except voyageai.error.RateLimitError as e:
+                backoff = max(25.0, (2 ** attempt) * 10.0)
+                log.warning(f"Voyage RateLimitError (attempt {attempt+1}). Backing off {backoff:.1f}s: {e}")
+                await asyncio.sleep(backoff)
+
+            except voyageai.error.InvalidRequestError as e:
+                log.error(f"Voyage InvalidRequestError (model={self._model}): {e}")
+                raise
+
+            except Exception as e:
+                log.error(f"Voyage embed error attempt {attempt+1}: {type(e).__name__}: {e}")
                 if attempt == self._max_retries:
                     raise
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(3.0)
 
         return [[0.0] * self._dimension for _ in clean_texts]
 
@@ -122,5 +129,9 @@ class VoyageEmbedder:
         return self._dimension
 
     async def close(self) -> None:
-        if self._client and not self._client.is_closed:
-            await self._client.aclose()
+        """Closes the underlying SDK client."""
+        if hasattr(self._client, "close"):
+            try:
+                await self._client.close()
+            except Exception:
+                pass

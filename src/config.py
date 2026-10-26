@@ -1,3 +1,4 @@
+from pathlib import Path
 """
 Application Configuration Module.
 Loads and validates all settings from environment variables (.env) using Pydantic Settings.
@@ -15,7 +16,7 @@ class Settings(BaseSettings):
     All credentials and environment-specific parameters are read from .env.
     """
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(Path(__file__).resolve().parent / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore"

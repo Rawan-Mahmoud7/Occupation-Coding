@@ -8,6 +8,7 @@ Defines endpoints for:
 """
 
 import io
+import time
 import logging
 from pathlib import Path
 from typing import Optional, List
@@ -56,61 +57,66 @@ def index_to_excel_col(idx: int) -> str:
     return "".join(reversed(result))
 
 
+AUTO_DETECT_PATTERNS = {
+    "occupation": ["المهنة_المدخلة", "المهنة", "مسمى المهنة", "اسم المهنة", "الوظيفة", "المسمى المهني", "occupation", "job"],
+    "activity": ["النشاط_الاقتصادي", "النشاط", "مجال العمل", "نوع النشاط", "activity"],
+    "education": ["الحالة_التعليمية", "المؤهل", "التعليم", "المستوى التعليمي", "education"],
+    "detail_a": ["اسم_المؤهل", "المؤهل الدراسي", "الشهادة", "qualification"],
+    "detail_b": ["التخصص", "تخصص", "الشعبة", "speciality", "specialization"],
+}
+
+
 def resolve_column(
     df: pd.DataFrame,
     col_param: Optional[str],
     col_role: str,
+    role_key: Optional[str] = None,
     required: bool = False,
 ) -> Optional[str]:
     """
-    Resolves column input parameter (which may be an exact header name or Excel letter like 'A' or 'U')
-    to the actual DataFrame column header.
-    Raises HTTPException 400 with helpful error message and available options if invalid.
+    Resolves column input parameter.
+    1. If provided by user: checks exact header name or Excel letter ('A', 'B', 'E', ...).
+    2. If not provided or 'auto': automatically detects column from known patterns.
+    3. Prevents user from accidentally assigning the Education column as Occupation.
     """
-    if not col_param or not str(col_param).strip():
-        if required:
-            available_letters = [index_to_excel_col(i) for i in range(len(df.columns))]
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"العمود الخاص بـ ({col_role}) إلزامي ولم يتم تحديده.\n"
-                    f"يرجى تحديد حرف العمود أو اسمه من الملف.\n"
-                    f"الحروف المتاحة: {', '.join(available_letters)}\n"
-                    f"الأسماء المتاحة: {', '.join(str(c) for c in df.columns)}"
-                ),
-            )
-        return None
+    param = str(col_param).strip() if (col_param and str(col_param).strip()) else ""
 
-    param = str(col_param).strip()
+    # Explicit user input
+    if param and param.lower() not in ("auto", "none", "null"):
+        # 1. Exact match with header name
+        if param in df.columns:
+            return param
 
-    # 1. Exact match with header name
-    if param in df.columns:
-        return param
+        # 2. Case-insensitive / stripped match
+        for col in df.columns:
+            if str(col).strip().lower() == param.lower():
+                return str(col)
 
-    # 2. Case-insensitive / stripped match
-    for col in df.columns:
-        if str(col).strip().lower() == param.lower():
-            return str(col)
+        # 3. Check if parameter is Excel letter (e.g. 'A', 'E', 'F', 'AA')
+        letter_idx = excel_col_to_index(param)
+        if 0 <= letter_idx < len(df.columns):
+            return str(df.columns[letter_idx])
 
-    # 3. Check if parameter is Excel letter (e.g. 'A', 'U', 'T', 'AA')
-    letter_idx = excel_col_to_index(param)
-    if 0 <= letter_idx < len(df.columns):
-        return str(df.columns[letter_idx])
+    # Automatic Detection Fallback
+    if role_key and role_key in AUTO_DETECT_PATTERNS:
+        patterns = AUTO_DETECT_PATTERNS[role_key]
+        for pat in patterns:
+            for col in df.columns:
+                cleaned_col = str(col).strip().lower()
+                if pat.lower() in cleaned_col:
+                    log.info(f"Auto-detected column for '{col_role}': '{col}'")
+                    return str(col)
 
-    # 4. Not found -> Raise 400 Bad Request with available letters and names
-    available_letters = [index_to_excel_col(i) for i in range(len(df.columns))]
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=(
-            f"العمود المحدد لـ ({col_role}) بالقيمة '{param}' غير موجود بالملف.\n"
-            f"الأعمدة المتاحة بالملف هي الحروف: {', '.join(available_letters)}\n"
-            f"أو الأسماء: {', '.join(str(c) for c in df.columns)}"
-        ),
-    )
+    if required:
+        cols_str = ', '.join(str(c) for c in df.columns)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not resolve column for {col_role}. Available columns: {cols_str}"
+        )
+    return None
 
 
-# ─── 1. Batch JSON Coding ───
-
+# ── 1. Batch Occupation Coding via JSON ──────────────────────────────────────
 @router.post(
     "/code",
     response_model=BatchCodingResponse,
@@ -138,7 +144,7 @@ async def code_batch(
 )
 async def code_file(
     file: UploadFile = File(..., description="ملف Excel أو CSV المطلوب تكويده"),
-    occupation_col: str = Form(..., description="اسم أو حرف عمود المهنة (إلزامي)"),
+    occupation_col: Optional[str] = Form(None, description="اسم أو حرف عمود المهنة (اختياري - يتم التعرف عليه تلقائياً إن تُرِك فارغاً)"),
     activity_col: Optional[str] = Form(None, description="اسم أو حرف عمود النشاط (اختياري)"),
     education_col: Optional[str] = Form(None, description="اسم أو حرف عمود المؤهل (اختياري)"),
     detail_a_col: Optional[str] = Form(None, description="اسم أو حرف عمود تفاصيل المؤهل A (اختياري)"),
@@ -177,11 +183,11 @@ async def code_file(
         raise HTTPException(status_code=400, detail="الملف المرفوع لا يحتوي على أي صفوف.")
 
     # Resolve Column Headers
-    resolved_occ = resolve_column(df, occupation_col, "اسم المهنة", required=True)
-    resolved_act = resolve_column(df, activity_col, "النشاط الاقتصادي", required=False)
-    resolved_edu = resolve_column(df, education_col, "الحالة التعليمية", required=False)
-    resolved_det_a = resolve_column(df, detail_a_col, "اسم المؤهل (تفاصيل A)", required=False)
-    resolved_det_b = resolve_column(df, detail_b_col, "التخصص (تفاصيل B)", required=False)
+    resolved_occ = resolve_column(df, occupation_col, "اسم المهنة", role_key="occupation", required=True)
+    resolved_act = resolve_column(df, activity_col, "النشاط الاقتصادي", role_key="activity", required=False)
+    resolved_edu = resolve_column(df, education_col, "الحالة التعليمية", role_key="education", required=False)
+    resolved_det_a = resolve_column(df, detail_a_col, "اسم المؤهل (تفاصيل A)", role_key="detail_a", required=False)
+    resolved_det_b = resolve_column(df, detail_b_col, "التخصص (تفاصيل B)", role_key="detail_b", required=False)
 
     # Convert DataFrame rows to OccupationRowInput
     rows: List[OccupationRowInput] = []
@@ -348,3 +354,64 @@ async def health_check(
         version=settings.APP_VERSION,
         components=components,
     )
+
+
+# ── 5. System Logs & Debugging Endpoints ─────────────────────────────────────
+
+@router.get(
+    "/logs/latest",
+    summary="عرض أحدث أسطر من سجل النظام (Logs)",
+    tags=["Monitoring & Debugging"],
+)
+async def get_latest_logs(lines: int = 100):
+    """
+    Returns the last N lines from logs/app.log.
+    Enables instant web-based debugging via Swagger UI or curl.
+    """
+    log_path = Path("C:/Occupation-Coding-APP/logs/app.log")
+    if not log_path.exists():
+        return {"total_lines": 0, "returned_lines": 0, "lines": [], "message": "ملف الـ Log لم يُنشأ بعد."}
+
+    try:
+        content = log_path.read_text(encoding="utf-8", errors="replace")
+        all_lines = content.splitlines()
+        tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        return {
+            "total_lines": len(all_lines),
+            "returned_lines": len(tail),
+            "log_file_path": str(log_path),
+            "lines": tail
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"خطأ في قراءة ملف الـ Log: {exc}")
+
+
+@router.get(
+    "/logs/download",
+    summary="تحميل ملف الـ Log بالكامل (app.log)",
+    tags=["Monitoring & Debugging"],
+)
+async def download_log_file():
+    """Streams the full app.log file as a downloadable text file with UTF-8 encoding."""
+    from fastapi.responses import FileResponse
+    log_path = Path("C:/Occupation-Coding-APP/logs/app.log")
+    if not log_path.exists():
+        raise HTTPException(status_code=404, detail="ملف الـ Log غير موجود حالياً.")
+    return FileResponse(
+        path=log_path,
+        filename="app.log",
+        media_type="text/plain; charset=utf-8"
+    )
+
+
+@router.delete(
+    "/logs/clear",
+    summary="مسح ملف الـ Log للبدء من جديد",
+    tags=["Monitoring & Debugging"],
+)
+async def clear_logs():
+    """Clears all records in app.log to start a fresh debugging session."""
+    log_path = Path("C:/Occupation-Coding-APP/logs/app.log")
+    if log_path.exists():
+        log_path.write_text("", encoding="utf-8")
+    return {"status": "success", "message": "تم مسح ملف الـ Log بنجاح."}

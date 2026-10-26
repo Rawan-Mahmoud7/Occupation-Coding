@@ -1,3 +1,4 @@
+import re
 """
 Remote LLM Client Implementation.
 Features:
@@ -22,6 +23,23 @@ from Service.prompts.coding_prompts import (
 )
 
 log = logging.getLogger(__name__)
+
+def _parse_json_safely(raw: str) -> dict:
+    """Parses JSON safely even if wrapped in markdown ```json ... ``` or extra whitespace."""
+    if not raw or not raw.strip():
+        raise ValueError("Empty LLM response")
+    clean = raw.strip()
+    if clean.startswith("```"):
+        clean = re.sub(r"^```(?:json)?\s*", "", clean)
+        clean = re.sub(r"\s*```$", "", clean).strip()
+    try:
+        return json.loads(clean)
+    except Exception:
+        m = re.search(r"(\{.*\})", clean, re.DOTALL)
+        if m:
+            return json.loads(m.group(1))
+        raise
+
 
 
 class AllKeysExhaustedError(Exception):
@@ -178,7 +196,7 @@ class RemoteLLMClient:
 
         raw_json = await self._call_api(messages)
         try:
-            parsed = json.loads(raw_json)
+            parsed = _parse_json_safely(raw_json)
             desc = parsed.get("work_description", row_context)
             secs = [int(s) for s in parsed.get("work_nature_sections", [5]) if str(s).isdigit()]
             return LLMUnderstandingResult(work_description=desc, work_nature_sections=secs)
@@ -211,7 +229,7 @@ class RemoteLLMClient:
 
         raw_json = await self._call_api(messages)
         try:
-            parsed = json.loads(raw_json)
+            parsed = _parse_json_safely(raw_json)
             selected_name = parsed.get("selected_occ", "").strip()
             confidence = float(parsed.get("confidence", 0.90))
             reason = parsed.get("reason", "")

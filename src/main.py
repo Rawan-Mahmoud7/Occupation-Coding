@@ -3,7 +3,10 @@ Main Application Entry Point.
 Configures FastAPI lifespan, CORS, database engine, dynamic section prompt loading, and router mounting.
 """
 
+import os
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,11 +18,44 @@ from Service.prompts.coding_prompts import load_sections_prompt_from_db
 from Service.pipeline.service_registry import build_default_registry
 from Service.pipeline.coding_pipeline import CodingPipeline
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+# Ensure logs directory exists
+LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+LOG_FILE = LOGS_DIR / "app.log"
+
+# Detailed Formatter supporting Arabic and timestamps
+log_formatter = logging.Formatter(
+    "%(asctime)s [%(levelname)s] [%(name)s]: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
 )
+
+# 1. Console Handler (stdout)
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(log_formatter)
+
+# 2. Rotating File Handler (UTF-8 encoded)
+file_handler = RotatingFileHandler(
+    LOG_FILE,
+    maxBytes=15 * 1024 * 1024,  # 15 MB
+    backupCount=5,
+    encoding="utf-8",
+)
+file_handler.setFormatter(log_formatter)
+
+# Configure Root Logger
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)
+root_logger.addHandler(console_handler)
+root_logger.addHandler(file_handler)
+
+# Suppress overly verbose third-party loggers
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.INFO)
+logging.getLogger("voyage").setLevel(logging.INFO)
+
 log = logging.getLogger("main")
+log.info(f"Logging initialized. Output file: {LOG_FILE}")
 
 
 @asynccontextmanager

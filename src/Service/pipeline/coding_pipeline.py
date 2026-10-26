@@ -202,7 +202,7 @@ class CodingPipeline:
                     # ── 2.2  DB Exact Match ────────────────────────────────
                     t_sub = time.monotonic()
                     log.debug(f"[ROW #{i}]   {_S2} ↳ checking DB exact match for norm_occ=%r  eligible=%s", ctx.norm_occupation, ctx.eligible_sections)
-                    db_hit = await self._reg.matcher.match_exact(ctx.norm_occupation, ctx.eligible_sections)
+                    db_hit = await self._reg.matcher.match(ctx.norm_occupation)
                     if db_hit and self._reg.rule_engine.validate_code(db_hit.code, ctx.education_level):
                         lat = (time.monotonic() - t_sub) * 1000
                         ctx.stage_latencies[_S2] = lat
@@ -230,7 +230,7 @@ class CodingPipeline:
                     t_sub = time.monotonic()
                     text_to_embed = f"{ctx.norm_occupation} {ctx.norm_activity}".strip()
                     log.debug(f"[ROW #{i}]   {_S2} ↳ embedding text=%r", text_to_embed)
-                    ctx.query_embedding = await self._reg.embedder.embed_text(text_to_embed)
+                    ctx.query_embedding = await self._reg.embedder.embed(text_to_embed)
                     embed_ms = (time.monotonic() - t_sub) * 1000
                     log.debug(f"[ROW #{i}]   {_S2} ↳ embedding done  vec_dim=%d | %.2fms", len(ctx.query_embedding or []), embed_ms)
 
@@ -298,7 +298,7 @@ class CodingPipeline:
                     # Bypass cache: generate vector directly
                     text_to_embed = f"{ctx.norm_occupation} {ctx.norm_activity}".strip()
                     log.debug(f"[ROW #{i}]   {_S2} ↳ bypass_cache=True  embedding text=%r", text_to_embed)
-                    ctx.query_embedding = await self._reg.embedder.embed_text(text_to_embed)
+                    ctx.query_embedding = await self._reg.embedder.embed(text_to_embed)
 
                 ctx.stage_latencies[_S2] = (time.monotonic() - t0) * 1000
                 log.debug(
@@ -344,9 +344,14 @@ class CodingPipeline:
                     f"[ROW #{i}] ▶ {_S3} | IN: raw_occ=%r  raw_act=%r  raw_edu=%r",
                     ctx.raw_occupation, ctx.raw_activity, ctx.raw_education,
                 )
-                work_desc, sections = await self._reg.llm.understand_occupation(
-                    ctx.raw_occupation, ctx.raw_activity, ctx.raw_education
+                row_context_str = (
+                    f"\u0627\u0644\u0645\u0647\u0646\u0629: {ctx.raw_occupation}\\n"
+                    f"\u0627\u0644\u0646\u0634\u0627\u0637: {ctx.raw_activity}\\n"
+                    f"\u0627\u0644\u0645\u0624\u0647\u0644: {ctx.raw_education}"
                 )
+                understand_result = await self._reg.llm.understand(row_context_str)
+                work_desc = understand_result.work_description
+                sections = understand_result.work_nature_sections
                 ctx.work_description_formal = work_desc
                 ctx.work_nature_sections    = sections
                 s3_ms = (time.monotonic() - t_s3) * 1000
@@ -415,7 +420,7 @@ class CodingPipeline:
                     f"[ROW #{i}] ▶ {_S5} | IN: eligible_sections=%s  top_k=%d  vec_dim=%d",
                     ctx.eligible_sections, self._settings.RETRIEVAL_TOP_K, len(ctx.query_embedding or []),
                 )
-                raw_candidates = await self._reg.retriever.retrieve(
+                raw_candidates = await self._reg.retriever.search(
                     query_vector=ctx.query_embedding,
                     eligible_sections=ctx.eligible_sections,
                     top_k=self._settings.RETRIEVAL_TOP_K,
