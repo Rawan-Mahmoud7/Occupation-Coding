@@ -218,14 +218,50 @@ async def code_file(
     df["matched_via"] = [r.matched_via for r in results]
     df["selection_reasoning"] = [r.selection_reasoning for r in results]
 
-    # Export to Excel BytesIO
+    # Build Top 20 Candidates summary column for Sheet 1 & detailed rows for Sheet 2
+    top_cands_col = []
+    cands_detail_rows = []
+
+    for r in results:
+        orig_occ = str(df.iloc[r.row_index][resolved_occ]) if (r.row_index < len(df) and pd.notna(df.iloc[r.row_index][resolved_occ])) else ""
+        if r.candidates:
+            summary_str = "\n".join(
+                f"{c['rank']}. [{c['code']}] {c['name']} ({c['similarity']*100:.1f}%)"
+                for c in r.candidates
+            )
+            top_cands_col.append(summary_str)
+
+            for c in r.candidates:
+                cands_detail_rows.append({
+                    "رقم_الصف": r.row_index + 1,
+                    "المهنة_المدخلة": orig_occ,
+                    "الرتبة": c["rank"],
+                    "كود_المرشح": c["code"],
+                    "اسم_المرشح": c["name"],
+                    "نسبة_التشابه_الدلالي": c["similarity"],
+                    "نسبة_مئوية": f"{c['similarity']*100:.2f}%",
+                    "تم_اختياره_كنتيجة_نهائية": "نعم" if str(c["code"]) == str(r.assigned_code) else "لا",
+                })
+        else:
+            top_cands_col.append("تطابق مباشر / كاش")
+
+    df["top_20_candidates"] = top_cands_col
+
+    # Export to Multi-Sheet Excel
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Coded_Occupations")
+        df.to_excel(writer, sheet_name="النتائج_الرئيسية", index=False)
+        if cands_detail_rows:
+            df_cands = pd.DataFrame(cands_detail_rows)
+            df_cands.to_excel(writer, sheet_name="تفاصيل_المرشحين_الـ20", index=False)
     output.seek(0)
 
+    filename = f"coded_{file.filename}" if file.filename else "coded_occupations.xlsx"
+    if not filename.endswith(".xlsx"):
+        filename = filename.rsplit(".", 1)[0] + ".xlsx"
+
     headers = {
-        "Content-Disposition": 'attachment; filename="coded_occupations.xlsx"'
+        "Content-Disposition": f'attachment; filename="{filename}"'
     }
     return StreamingResponse(
         output,

@@ -1,4 +1,3 @@
-import re
 """
 Remote LLM Client Implementation.
 Features:
@@ -17,29 +16,13 @@ from Service.interfaces.pipeline_context import Candidate
 from Service.interfaces.base_llm import LLMUnderstandingResult
 from Service.prompts.coding_prompts import (
     STATIC_SECTIONS_SYSTEM_PROMPT,
+    get_sections_system_prompt,
     build_understand_prompt,
     build_hierarchical_tree,
     build_selection_prompt,
 )
 
 log = logging.getLogger(__name__)
-
-def _parse_json_safely(raw: str) -> dict:
-    """Parses JSON safely even if wrapped in markdown ```json ... ``` or extra whitespace."""
-    if not raw or not raw.strip():
-        raise ValueError("Empty LLM response")
-    clean = raw.strip()
-    if clean.startswith("```"):
-        clean = re.sub(r"^```(?:json)?\s*", "", clean)
-        clean = re.sub(r"\s*```$", "", clean).strip()
-    try:
-        return json.loads(clean)
-    except Exception:
-        m = re.search(r"(\{.*\})", clean, re.DOTALL)
-        if m:
-            return json.loads(m.group(1))
-        raise
-
 
 
 class AllKeysExhaustedError(Exception):
@@ -190,13 +173,13 @@ class RemoteLLMClient:
                     edu = line.split(":", 1)[-1].strip()
 
         messages = [
-            {"role": "system", "content": STATIC_SECTIONS_SYSTEM_PROMPT},
+            {"role": "system", "content": get_sections_system_prompt()},
             {"role": "user", "content": build_understand_prompt(occ, act, edu)},
         ]
 
         raw_json = await self._call_api(messages)
         try:
-            parsed = _parse_json_safely(raw_json)
+            parsed = json.loads(raw_json)
             desc = parsed.get("work_description", row_context)
             secs = [int(s) for s in parsed.get("work_nature_sections", [5]) if str(s).isdigit()]
             return LLMUnderstandingResult(work_description=desc, work_nature_sections=secs)
@@ -223,13 +206,13 @@ class RemoteLLMClient:
         tree_text = build_hierarchical_tree(candidates)
 
         messages = [
-            {"role": "system", "content": STATIC_SECTIONS_SYSTEM_PROMPT},
+            {"role": "system", "content": get_sections_system_prompt()},
             {"role": "user", "content": build_selection_prompt(row_context, tree_text)},
         ]
 
         raw_json = await self._call_api(messages)
         try:
-            parsed = _parse_json_safely(raw_json)
+            parsed = json.loads(raw_json)
             selected_name = parsed.get("selected_occ", "").strip()
             confidence = float(parsed.get("confidence", 0.90))
             reason = parsed.get("reason", "")

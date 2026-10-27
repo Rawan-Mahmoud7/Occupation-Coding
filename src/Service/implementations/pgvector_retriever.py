@@ -1,7 +1,14 @@
 """
 Pgvector Retriever Implementation.
-Searches occupation_vectors using v_combined cosine distance,
+Searches occupation_vectors using weighted cosine similarity across all 4
+context-aware chunk vectors (v_identity, v_hierarchy, v_chapter, v_main),
 strictly filtered to eligible ISCO sections, and retrieves full hierarchy names.
+
+Scoring formula (matches the Colab voyage-context-4 evaluation script):
+  score = 0.55 * cosine(q, v_identity)
+        + 0.15 * cosine(q, v_hierarchy)
+        + 0.18 * cosine(q, v_chapter)
+        + 0.12 * cosine(q, v_main)
 """
 
 from typing import List, Optional
@@ -9,6 +16,12 @@ from sqlalchemy import text
 from Service.interfaces.pipeline_context import Candidate
 from Service.models.dbschemes.scheme.occupation import Occupation
 from Service.models.dbschemes.scheme.occupation_vector import OccupationVector
+
+# Chunk weights – must match import_vectors.py and the Colab script exactly
+_W_IDENTITY  = 0.55
+_W_HIERARCHY = 0.15
+_W_CHAPTER   = 0.18
+_W_MAIN      = 0.12
 
 
 class PgvectorRetriever:
@@ -27,7 +40,10 @@ class PgvectorRetriever:
         top_k: int = 20
     ) -> List[Candidate]:
         """
-        Executes pgvector cosine distance search filtered to eligible sections.
+        Executes pgvector weighted-chunk cosine similarity search filtered to
+        eligible sections.  Computes the weighted sum of cosine similarities
+        between the query vector and each of the 4 context-aware chunk vectors
+        stored per occupation (matching the Colab scoring formula).
         Returns candidates populated with code, name, and full hierarchy names.
         """
         if not query_vector:
@@ -46,7 +62,12 @@ class PgvectorRetriever:
                 sub.name_sub,
                 div.name_div,
                 gr.name_gr,
-                1 - (ov.v_combined <=> :query_vec) AS similarity
+                (
+                    :w_identity  * (1 - (ov.v_identity  <=> :query_vec))
+                  + :w_hierarchy * (1 - (ov.v_hierarchy <=> :query_vec))
+                  + :w_chapter   * (1 - (ov.v_chapter   <=> :query_vec))
+                  + :w_main      * (1 - (ov.v_main      <=> :query_vec))
+                ) AS similarity
             FROM occupation_vectors ov
             JOIN occupations oc ON ov.id_oc = oc.id_oc
             JOIN groups gr ON oc.id_gr = gr.id_gr
@@ -54,7 +75,7 @@ class PgvectorRetriever:
             JOIN subsections sub ON div.id_sub = sub.id_sub
             JOIN sections sec ON sub.id_sec = sec.id_sec
             WHERE CAST(sec.code_sec AS INTEGER) = ANY(:eligible_sections)
-            ORDER BY ov.v_combined <=> :query_vec ASC
+            ORDER BY similarity DESC
             LIMIT :top_k;
         """)
 
@@ -65,6 +86,10 @@ class PgvectorRetriever:
                     "query_vec": vec_str,
                     "eligible_sections": sections_list,
                     "top_k": top_k,
+                    "w_identity": _W_IDENTITY,
+                    "w_hierarchy": _W_HIERARCHY,
+                    "w_chapter": _W_CHAPTER,
+                    "w_main": _W_MAIN,
                 }
             )
             rows = result.fetchall()

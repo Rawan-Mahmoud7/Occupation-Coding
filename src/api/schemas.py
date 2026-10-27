@@ -47,6 +47,7 @@ class SingleCodingResult(BaseModel):
     eligible_sections: List[int] = Field(default_factory=list, description="الأقسام الرئيسية المؤهلة")
     processing_time_ms: float = Field(..., description="زمن معالجة هذا السجل بالمللي ثانية")
     selection_reasoning: Optional[str] = Field(default="", description="سبب اختيار الرمز")
+    candidates: List[dict] = Field(default_factory=list, description="قائمة أفضل 20 مرشحاً مع نسب التشابه")
     error: Optional[str] = Field(default=None, description="رسالة الخطأ إن تعذر التكويد")
 
 

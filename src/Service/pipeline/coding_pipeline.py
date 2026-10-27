@@ -226,40 +226,12 @@ class CodingPipeline:
                         results[ctx.row_index] = self._build_result(ctx, t0)
                         continue
 
-                    # ── 2.3  Voyage Embedding (computed ONCE) ──────────────
-                    t_sub = time.monotonic()
-                    text_to_embed = f"{ctx.norm_occupation} {ctx.norm_activity}".strip()
-                    log.debug(f"[ROW #{i}]   {_S2} ↳ embedding text=%r", text_to_embed)
-                    ctx.query_embedding = await self._reg.embedder.embed(text_to_embed)
-                    embed_ms = (time.monotonic() - t_sub) * 1000
-                    log.debug(f"[ROW #{i}]   {_S2} ↳ embedding done  vec_dim=%d | %.2fms", len(ctx.query_embedding or []), embed_ms)
-
-                    # ── 2.4  Semantic Cache (>= threshold) ────────────────
-                    t_sub = time.monotonic()
-                    sem_hit = await self._reg.cache.semantic_lookup(
-                        ctx.query_embedding, ctx.education_level, threshold=self._settings.SEMANTIC_CACHE_THRESHOLD
-                    )
-                    if sem_hit and self._reg.rule_engine.validate_code(sem_hit.code, ctx.education_level):
-                        lat = (time.monotonic() - t_sub) * 1000
-                        ctx.stage_latencies[_S2] = lat
-                        ctx.matched_code = sem_hit.code
-                        ctx.matched_name = sem_hit.name
-                        ctx.matched_via  = MatchMethod.SEMANTIC_CACHE
-                        ctx.confidence   = sem_hit.confidence
-                        ctx.is_resolved  = True
-                        log.debug(
-                            f"[ROW #{i}] ✓ {_S2} | HIT: semantic_cache  code=%s  name=%r  sim=%.4f | %.2fms",
-                            sem_hit.code, sem_hit.name, sem_hit.confidence, lat,
-                        )
-                        results[ctx.row_index] = self._build_result(ctx, t0)
-                        continue
-
-                    # ── 2.5  In-Flight Deduplication ──────────────────────
+                    # ── 2.3  In-Flight Deduplication (Exact Key) ───────────
                     t_sub = time.monotonic()
                     is_waiter, leader_id = await self._reg.cache.check_or_register_inflight(
                         request_id=ctx.request_id,
                         cache_key=ctx.cache_key,
-                        query_vector=ctx.query_embedding,
+                        query_vector=None,
                         norm_activity=ctx.norm_activity,
                         edu_level=ctx.education_level,
                         semantic_threshold=self._settings.SEMANTIC_INFLIGHT_THRESHOLD,
@@ -293,12 +265,6 @@ class CodingPipeline:
                             log.debug(
                                 f"[ROW #{i}]   {_S2} ↳ inflight_wait failed/timeout — falling through to LLM pipeline",
                             )
-
-                else:
-                    # Bypass cache: generate vector directly
-                    text_to_embed = f"{ctx.norm_occupation} {ctx.norm_activity}".strip()
-                    log.debug(f"[ROW #{i}]   {_S2} ↳ bypass_cache=True  embedding text=%r", text_to_embed)
-                    ctx.query_embedding = await self._reg.embedder.embed(text_to_embed)
 
                 ctx.stage_latencies[_S2] = (time.monotonic() - t0) * 1000
                 log.debug(
@@ -416,6 +382,13 @@ class CodingPipeline:
             i  = ctx.row_index
             try:
                 t_s5 = time.monotonic()
+
+                # ── Embed formal work description from Stage 3 LLM Understanding ──
+                # Matches the Colab script where 'وصف طبيعة العمل' (formal description) is embedded.
+                text_to_embed = (ctx.work_description_formal or ctx.norm_occupation or "").strip()
+                log.debug(f"[ROW #{i}]   {_S5} ↳ embedding formal work_desc=%r", text_to_embed)
+                ctx.query_embedding = await self._reg.embedder.embed(text_to_embed)
+
                 log.debug(
                     f"[ROW #{i}] ▶ {_S5} | IN: eligible_sections=%s  top_k=%d  vec_dim=%d",
                     ctx.eligible_sections, self._settings.RETRIEVAL_TOP_K, len(ctx.query_embedding or []),
@@ -441,7 +414,7 @@ class CodingPipeline:
                     len(raw_candidates), len(valid_candidates), filtered_count, s5_ms,
                 )
                 if valid_candidates:
-                    for rank, c in enumerate(valid_candidates[:5], 1):
+                    for rank, c in enumerate(valid_candidates, 1):
                         log.debug(
                             f"[ROW #{i}]   {_S5}   candidate[{rank}]: code=%s  name=%r  sim=%.4f",
                             c.code, c.name, c.similarity,
@@ -620,6 +593,16 @@ class CodingPipeline:
             f" | ERROR: {ctx.error_message}" if ctx.error_message else "",
         )
 
+        cands_list = [
+            {
+                "rank": idx + 1,
+                "code": c.code,
+                "name": c.name,
+                "similarity": round(c.similarity, 4),
+            }
+            for idx, c in enumerate(ctx.candidates or [])
+        ]
+
         return SingleCodingResult(
             row_index=ctx.row_index,
             assigned_code=code,
@@ -631,6 +614,7 @@ class CodingPipeline:
             processing_time_ms=round(elapsed_ms, 2),
             selection_reasoning=ctx.selection_reasoning or "",
             error=ctx.error_message,
+            candidates=cands_list,
         )
 
     def _compute_metrics(self, results: List[SingleCodingResult], duration_ms: float) -> BatchSummaryMetrics:
