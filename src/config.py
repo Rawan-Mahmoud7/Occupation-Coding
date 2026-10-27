@@ -23,50 +23,50 @@ class Settings(BaseSettings):
     )
 
     # ── General Application Settings ──
-    APP_NAME: str = "Egyptian Occupation Coding API"
-    APP_VERSION: str = "1.0.0"
-    DEBUG: bool = False
-    ENVIRONMENT: str = "production"
-    LOG_LEVEL: str = "INFO"
+    APP_NAME: str
+    APP_VERSION: str
+    DEBUG: bool 
+    ENVIRONMENT: str 
+    LOG_LEVEL: str 
 
     # ── PostgreSQL & pgvector Database Settings ──
-    POSTGRES_HOST: str = "localhost"
-    POSTGRES_PORT: int = 5432
-    POSTGRES_USERNAME: str = "postgres"
-    POSTGRES_PASSWORD: str = Field(default="postgres", description="PostgreSQL password")
-    POSTGRES_MAIN_DATABASE: str = "occupation_coding"
-    POSTGRES_POOL_SIZE: int = 20
-    POSTGRES_MAX_OVERFLOW: int = 10
-    POSTGRES_POOL_TIMEOUT: float = 30.0
+    POSTGRES_HOST: str
+    POSTGRES_PORT: int
+    POSTGRES_USERNAME: str
+    POSTGRES_PASSWORD: str
+    POSTGRES_MAIN_DATABASE: str
+    POSTGRES_POOL_SIZE: int
+    POSTGRES_MAX_OVERFLOW: int
+    POSTGRES_POOL_TIMEOUT: float
 
     # ── Voyage AI Embedder Settings ──
-    VOYAGE_API_KEY: str = Field(default="", description="Primary Voyage AI API key")
-    VOYAGE_MODEL: str = "voyage-context-4"
-    VOYAGE_DIMENSION: int = 1024
-    VOYAGE_RPM_LIMIT: int = 3
-    VOYAGE_TPM_LIMIT: int = 10000
-    VOYAGE_TIMEOUT_SECONDS: float = 20.0
-    VOYAGE_MAX_RETRIES: int = 3
+    VOYAGE_API_KEY: str
+    VOYAGE_MODEL: str
+    VOYAGE_DIMENSION: int
+    VOYAGE_RPM_LIMIT: int 
+    VOYAGE_TPM_LIMIT: int
+    VOYAGE_TIMEOUT_SECONDS: float 
+    VOYAGE_MAX_RETRIES: int 
 
     # ── Remote LLM API & Multi-Account Rotation Settings ──
-    LLM_PROVIDER: str = "remote_api"
-    LLM_BASE_URL: str = "https://api.openai.com/v1"
-    LLM_MODEL: str = "gemma2-9b-it"
-    LLM_API_KEYS: str = Field(default="", description="Comma-separated API keys for rotation")
-    LLM_CONCURRENCY: int = 4
-    LLM_TIMEOUT_SECONDS: float = 35.0
-    LLM_TEMPERATURE: float = 0.0
-    LLM_MONTHLY_TOKEN_QUOTA_PER_KEY: int = 1000000
+    LLM_PROVIDER: str
+    LLM_BASE_URL: str
+    LLM_MODEL: str 
+    LLM_API_KEYS: str
+    LLM_CONCURRENCY: int 
+    LLM_TIMEOUT_SECONDS: float
+    LLM_TEMPERATURE: float
+    LLM_MONTHLY_TOKEN_QUOTA_PER_KEY: int
 
     # ── Cache & In-Flight Deduplication Settings ──
-    SEMANTIC_CACHE_THRESHOLD: float = 0.98
-    SEMANTIC_INFLIGHT_THRESHOLD: float = 0.98
-    CACHE_MAX_SIZE: int = 50000
-    INFLIGHT_TIMEOUT_SECONDS: float = 40.0
+    SEMANTIC_CACHE_THRESHOLD: float
+    SEMANTIC_INFLIGHT_THRESHOLD: float 
+    CACHE_MAX_SIZE: int
+    INFLIGHT_TIMEOUT_SECONDS: float 
 
     # ── Pipeline Tuning Parameters ──
-    RETRIEVAL_TOP_K: int = 20
-    DEFAULT_BATCH_SIZE: int = 50
+    RETRIEVAL_TOP_K: int 
+    DEFAULT_BATCH_SIZE: int
 
     @property
     def api_keys_list(self) -> List[str]:
