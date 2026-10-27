@@ -3,7 +3,6 @@ REST API Router Module.
 Defines endpoints for:
 - POST /api/v1/code: Batch JSON coding.
 - POST /api/v1/code/file: Upload Excel/CSV with flexible column mapping and clean export.
-- POST /api/v1/config/add-llm-key: Dynamically add an API key and update .env.
 - GET /api/v1/health: Deep health check for DB, Voyage Embedder, and LLM.
 """
 
